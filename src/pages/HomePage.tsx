@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { ArrowDown, ArrowRight, PenLine } from 'lucide-react';
+import { ArrowDown, ArrowRight, Feather, PenLine } from 'lucide-react';
 import { useEditorial } from '../context/EditorialContext';
 import { AUTHOR_ILLUSTRATION_IMAGE, HERO_KASHMIR_IMAGE } from '../data/sampleArticles';
 import { formatEditorialDate } from '../utils/editorialUtils';
@@ -14,7 +14,7 @@ import {
 import { NewsletterSection } from '../components/NewsletterSection';
 
 export const HomePage: React.FC = () => {
-  const { publishedArticles, categories, loadingArticles } = useEditorial();
+  const { publishedArticles, categories, thoughts, loadingArticles, loadingThoughts } = useEditorial();
 
   useEffect(() => {
     document.title = 'SHAHNOOR Writes — Stories, Essays & Shared Feelings';
@@ -407,6 +407,107 @@ export const HomePage: React.FC = () => {
                 </article>
               ))}
             </div>
+          </div>
+        )}
+      </section>
+
+      {/* COMMUNITY POSTS — SHARED FEELINGS & THOUGHTS ON MAIN PAGE */}
+      <section className="max-w-7xl mx-auto px-5 sm:px-8 py-14 sm:py-18">
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-6 border-b border-[#493528]/15 mb-10">
+          <div>
+            <p className="text-xs tracking-[0.18em] uppercase text-[#9C443B] font-medium mb-2">
+              Reader Circle
+            </p>
+            <h2 className="font-display text-3xl sm:text-4xl font-medium text-[#25231F]">
+              Shared Feelings &amp; Community Posts
+            </h2>
+          </div>
+          <div className="flex items-center gap-5">
+            <Link
+              to="/thoughts"
+              className="editorial-link text-sm text-[#493528] hover:text-[#9C443B]"
+            >
+              {thoughts.length > 0 ? `View all ${thoughts.length} posts` : 'Open Thoughts'}
+            </Link>
+            <Link
+              to="/thoughts"
+              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium uppercase tracking-wider bg-[#9C443B] text-[#F2EBDD] hover:bg-[#493528] transition-colors"
+            >
+              <Feather className="w-3.5 h-3.5" />
+              Post Your Thought
+            </Link>
+          </div>
+        </div>
+
+        {loadingThoughts ? (
+          <p className="font-display italic text-xl text-[#493528]/70 py-8">
+            Gathering shared thoughts...
+          </p>
+        ) : thoughts.length === 0 ? (
+          <div className="py-12 px-6 text-center border border-[#493528]/15 bg-[#E9DFC9]/35">
+            <Feather className="w-6 h-6 text-[#9C443B]/75 mx-auto mb-3" />
+            <h3 className="font-display text-2xl font-medium text-[#25231F] mb-2">
+              No community posts shared yet
+            </h3>
+            <p className="font-editorial text-sm text-[#493528]/80 max-w-md mx-auto mb-5">
+              Every member who joins with an email and password can share their feelings, poetry, and reflections right here on the main page.
+            </p>
+            <Link
+              to="/account"
+              className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-medium uppercase tracking-wider bg-[#493528] text-[#F2EBDD] hover:bg-[#9C443B] transition-colors"
+            >
+              Join &amp; Share
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {thoughts.slice(0, 6).map((item) => {
+              const dateStr = item.createdAtMillis
+                ? new Date(item.createdAtMillis).toLocaleDateString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                  })
+                : '';
+              return (
+                <article
+                  key={item.id}
+                  className="ivory-surface border border-[#493528]/16 p-6 flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-[#493528]/75 mb-2.5">
+                      <span className="text-[#9C443B] font-medium uppercase tracking-wider">
+                        {item.theme}
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span className="text-[#25231F] font-medium">{item.authorName}</span>
+                      {dateStr && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span>{dateStr}</span>
+                        </>
+                      )}
+                    </div>
+                    <h3 className="font-display text-2xl font-medium text-[#25231F] leading-snug mb-2.5">
+                      {item.title}
+                    </h3>
+                    <p className="font-editorial text-sm leading-[1.75] text-[#25231F]/85 line-clamp-4 whitespace-pre-wrap mb-4">
+                      {item.body}
+                    </p>
+                  </div>
+                  <div className="pt-3 border-t border-[#493528]/10">
+                    <Link
+                      to="/thoughts"
+                      className="inline-flex items-center gap-1.5 text-xs font-medium tracking-[0.06em] uppercase text-[#9C443B] hover:text-[#25231F] transition-colors"
+                    >
+                      Read in Reader Circle
+                      <ArrowRight className="w-3 h-3" />
+                    </Link>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
       </section>
