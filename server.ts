@@ -1,23 +1,49 @@
 import 'dotenv/config';
-import express, { Request, Response } from 'express';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import express, { type NextFunction, type Request, type Response } from 'express';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { GoogleGenAI, Type } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
+import { signSessionToken, verifySessionToken } from './server/auth.ts';
+import {
+  type DbUser,
+  addContactMessageRecord,
+  addReflectionRecord,
+  addSubscriberRecord,
+  authenticateUser,
+  createAuthorUserOnce,
+  createReaderUser,
+  deleteArticleRecord,
+  deleteCategoryRecord,
+  deleteMessageRecord,
+  deleteReflectionRecord,
+  deleteThoughtRecord,
+  getArticleById,
+  getAuthorConfig,
+  getUserById,
+  listAllArticles,
+  listCategories,
+  listMessages,
+  listPublishedArticles,
+  listReflections,
+  listSubscribers,
+  listThoughts,
+  saveThoughtRecord,
+  updateMessageStatusRecord,
+  updateUserProfileRecord,
+  upsertArticle,
+  upsertCategory,
+} from './server/db.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const firebaseConfigPath = path.resolve(__dirname, 'firebase-applet-config.json');
-const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf-8')) as {
-  projectId: string;
-  apiKey: string;
-  firestoreDatabaseId: string;
-};
-
-const PRIMARY_ADMIN_EMAIL = 'realzuhaan@gmail.com';
 const MODEL_NAME = 'gemini-4-hydrogen';
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+interface AuthenticatedRequest extends Request {
+  authUser?: DbUser;
+}
 
 type AssistantMode =
   | 'chat'
@@ -44,86 +70,38 @@ interface ChatTurn {
   text: string;
 }
 
-interface VerifiedUser {
-  uid: string;
-  email: string;
-  emailVerified: boolean;
+function extractBearerUser(req: Request): DbUser | null {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  const token = authHeader.slice('Bearer '.length).trim();
+  if (!token) return null;
+  const claims = verifySessionToken(token);
+  if (!claims) return null;
+  return getUserById(claims.uid);
 }
 
-async function verifyFirebaseAdminToken(idToken: string): Promise<VerifiedUser> {
-  const res = await fetch(
-    `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idToken }),
-    },
-  );
-
-  if (!res.ok) {
-    throw new Error('Invalid or expired session token.');
+function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+  const user = extractBearerUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Please sign in to continue.' });
+    return;
   }
+  req.authUser = user;
+  next();
+}
 
-  const data = (await res.json()) as {
-    users?: Array<{
-      localId?: string;
-      email?: string;
-      emailVerified?: boolean;
-    }>;
-  };
-
-  const user = data.users?.[0];
-  if (!user || !user.localId || !user.email) {
-    throw new Error('Unable to verify account identity.');
+function requireAuthor(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+  const user = extractBearerUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Please sign in to continue.' });
+    return;
   }
-
-  const normalizedEmail = user.email.toLowerCase();
-  const isVerifiedPrimary =
-    Boolean(user.emailVerified) && normalizedEmail === PRIMARY_ADMIN_EMAIL;
-
-  let isAuthorized = isVerifiedPrimary;
-
-  if (!isAuthorized) {
-    const baseFirestoreUrl = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
-      firebaseConfig.projectId,
-    )}/databases/${encodeURIComponent(firebaseConfig.firestoreDatabaseId)}/documents`;
-
-    // Check claimed author owner record (/appConfig/author)
-    const authorDocRes = await fetch(`${baseFirestoreUrl}/appConfig/author`, {
-      headers: { Authorization: `Bearer ${idToken}` },
-    });
-    if (authorDocRes.ok) {
-      const authorDoc = (await authorDocRes.json()) as {
-        fields?: { ownerUid?: { stringValue?: string } };
-      };
-      if (authorDoc.fields?.ownerUid?.stringValue === user.localId) {
-        isAuthorized = true;
-      }
-    }
-
-    // Fallback check against /admins/{uid}
-    if (!isAuthorized) {
-      const adminRes = await fetch(
-        `${baseFirestoreUrl}/admins/${encodeURIComponent(user.localId)}`,
-        {
-          headers: { Authorization: `Bearer ${idToken}` },
-        },
-      );
-      if (adminRes.ok) {
-        isAuthorized = true;
-      }
-    }
+  if (user.role !== 'author') {
+    res.status(403).json({ error: 'Only the publication author may perform this action.' });
+    return;
   }
-
-  if (!isAuthorized) {
-    throw new Error('Only authorized authors may access the Writing Assistant.');
-  }
-
-  return {
-    uid: user.localId,
-    email: normalizedEmail,
-    emailVerified: Boolean(user.emailVerified),
-  };
+  req.authUser = user;
+  next();
 }
 
 function getGeminiClient(): GoogleGenAI {
@@ -183,29 +161,389 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
 
-  app.post('/api/assistant', async (req: Request, res: Response) => {
+  // Bootstrap public + role-scoped editorial data
+  app.get('/api/bootstrap', (req: Request, res: Response) => {
+    const user = extractBearerUser(req);
+    const authorConfig = getAuthorConfig();
+    const publishedArticles = listPublishedArticles();
+    const categories = listCategories();
+    const thoughts = listThoughts();
+
+    const payload: Record<string, unknown> = {
+      user,
+      authorConfig,
+      publishedArticles,
+      categories,
+      thoughts,
+    };
+
+    if (user?.role === 'author') {
+      payload.allArticles = listAllArticles();
+      payload.subscribers = listSubscribers();
+      payload.messages = listMessages();
+    }
+
+    res.json(payload);
+  });
+
+  // Reader Join (Name + Email + Password)
+  app.post('/api/auth/signup', (req: Request, res: Response) => {
     try {
-      const authHeader = req.headers.authorization;
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        res.status(401).json({ error: 'Authentication required.' });
+      const body = req.body as {
+        name?: string;
+        email?: string;
+        password?: string;
+        bio?: string;
+      };
+      const name = String(body.name ?? '').trim();
+      const email = String(body.email ?? '').trim().toLowerCase();
+      const password = String(body.password ?? '');
+      const bio = String(body.bio ?? '').trim();
+
+      if (!name || name.length > 80) {
+        res.status(400).json({ error: 'Please enter your name (up to 80 characters).' });
+        return;
+      }
+      if (!EMAIL_REGEX.test(email) || email.length > 160) {
+        res.status(400).json({ error: 'Please enter a valid email address.' });
+        return;
+      }
+      if (password.length < 6 || password.length > 128) {
+        res.status(400).json({ error: 'Password must be at least 6 characters.' });
         return;
       }
 
-      const idToken = authHeader.slice('Bearer '.length).trim();
-      if (!idToken) {
-        res.status(401).json({ error: 'Missing authentication token.' });
+      const user = createReaderUser({ name, email, password, bio });
+      const token = signSessionToken(user.id, user.role);
+      res.status(201).json({ token, user });
+    } catch (err) {
+      res.status(400).json({
+        error: err instanceof Error ? err.message : 'Unable to create your account.',
+      });
+    }
+  });
+
+  // First-run Author Profile setup (Name + Email + Password)
+  app.post('/api/auth/author-setup', (req: Request, res: Response) => {
+    try {
+      const body = req.body as {
+        name?: string;
+        email?: string;
+        password?: string;
+      };
+      const name = String(body.name ?? '').trim();
+      const email = String(body.email ?? '').trim().toLowerCase();
+      const password = String(body.password ?? '');
+
+      if (!name || name.length > 80) {
+        res.status(400).json({ error: 'Please enter your author name (up to 80 characters).' });
+        return;
+      }
+      if (!EMAIL_REGEX.test(email) || email.length > 160) {
+        res.status(400).json({ error: 'Please enter a valid email address.' });
+        return;
+      }
+      if (password.length < 6 || password.length > 128) {
+        res.status(400).json({ error: 'Password must be at least 6 characters.' });
         return;
       }
 
+      const user = createAuthorUserOnce({ name, email, password });
+      const token = signSessionToken(user.id, user.role);
+      res.status(201).json({ token, user });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to create author profile.';
+      const status = msg.includes('already exists') ? 409 : 400;
+      res.status(status).json({ error: msg });
+    }
+  });
+
+  // Email + Password Sign In (Readers and Author)
+  app.post('/api/auth/signin', (req: Request, res: Response) => {
+    const body = req.body as { email?: string; password?: string };
+    const email = String(body.email ?? '').trim().toLowerCase();
+    const password = String(body.password ?? '');
+
+    if (!EMAIL_REGEX.test(email) || !password) {
+      res.status(400).json({ error: 'Please enter your email and password.' });
+      return;
+    }
+
+    const user = authenticateUser(email, password);
+    if (!user) {
+      res.status(401).json({ error: 'Incorrect email or password. Please check your details and try again.' });
+      return;
+    }
+
+    const token = signSessionToken(user.id, user.role);
+    res.json({ token, user });
+  });
+
+  // Update signed-in user's public display profile
+  app.patch('/api/auth/profile', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const body = req.body as { name?: string; bio?: string };
+    const name = String(body.name ?? '').trim();
+    const bio = String(body.bio ?? '').trim();
+    if (!name || name.length > 80) {
+      res.status(400).json({ error: 'Display name cannot be empty.' });
+      return;
+    }
+    const updated = updateUserProfileRecord(req.authUser!.id, name, bio);
+    res.json({ user: updated });
+  });
+
+  // Articles (Author only)
+  app.post('/api/articles', requireAuthor, (req: AuthenticatedRequest, res: Response) => {
+    const body = req.body as {
+      id?: string;
+      slug?: string;
+      title?: string;
+      subtitle?: string;
+      excerpt?: string;
+      content?: string;
+      coverImage?: string;
+      coverCaption?: string;
+      category?: string;
+      tags?: string[];
+      status?: 'draft' | 'published' | 'scheduled';
+      featured?: boolean;
+      authorName?: string;
+      readingTimeMinutes?: number;
+      seoTitle?: string;
+      seoDescription?: string;
+      publishDate?: string;
+    };
+
+    const title = String(body.title ?? '').trim();
+    const content = String(body.content ?? '');
+    if (!title || !content.trim()) {
+      res.status(400).json({ error: 'Please include both a title and manuscript content.' });
+      return;
+    }
+
+    const status =
+      body.status === 'published' || body.status === 'scheduled' ? body.status : 'draft';
+    const publishDate = String(body.publishDate || new Date().toISOString().slice(0, 10)).slice(
+      0,
+      40,
+    );
+    const parsedDate = new Date(
+      publishDate.includes('T') ? publishDate : `${publishDate}T08:00:00`,
+    );
+    const publishAtMillis = Number.isNaN(parsedDate.getTime())
+      ? Date.now()
+      : parsedDate.getTime();
+
+    const article = upsertArticle(req.authUser!.id, {
+      id: body.id,
+      slug: String(body.slug || title),
+      title,
+      subtitle: String(body.subtitle ?? ''),
+      excerpt: String(body.excerpt ?? ''),
+      content,
+      coverImage: String(body.coverImage ?? ''),
+      coverCaption: String(body.coverCaption ?? ''),
+      category: String(body.category ?? 'Essays'),
+      tags: Array.isArray(body.tags) ? body.tags.map(String) : [],
+      status,
+      featured: Boolean(body.featured),
+      authorName: String(body.authorName || req.authUser!.name || 'Shahnoor'),
+      readingTimeMinutes: Number(body.readingTimeMinutes ?? 5),
+      seoTitle: String(body.seoTitle ?? ''),
+      seoDescription: String(body.seoDescription ?? ''),
+      publishDate,
+      publishAtMillis,
+    });
+
+    res.json({ article });
+  });
+
+  app.delete('/api/articles/:id', requireAuthor, (req: AuthenticatedRequest, res: Response) => {
+    deleteArticleRecord(String(req.params.id));
+    res.json({ ok: true });
+  });
+
+  // Categories (Author only)
+  app.post('/api/categories', requireAuthor, (req: AuthenticatedRequest, res: Response) => {
+    const body = req.body as { name?: string; description?: string; accent?: string };
+    const name = String(body.name ?? '').trim();
+    const slug = name
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60);
+
+    if (!name || !slug) {
+      res.status(400).json({ error: 'Please provide a valid category name.' });
+      return;
+    }
+
+    const category = upsertCategory({
+      name,
+      slug,
+      description: String(body.description ?? ''),
+      accent: String(body.accent ?? '#9C443B'),
+    });
+    res.status(201).json({ category });
+  });
+
+  app.delete('/api/categories/:id', requireAuthor, (req: AuthenticatedRequest, res: Response) => {
+    deleteCategoryRecord(String(req.params.id));
+    res.json({ ok: true });
+  });
+
+  // Community Thoughts (Any signed-in reader or author; edit/delete enforced by ownership)
+  app.post('/api/thoughts', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const body = req.body as { id?: string; title?: string; body?: string; theme?: string };
+      const title = String(body.title ?? '').trim();
+      const text = String(body.body ?? '').trim();
+      const theme = String(body.theme ?? 'Reflection').trim() || 'Reflection';
+
+      if (!title || !text) {
+        res.status(400).json({ error: 'Please include both a title and your reflection.' });
+        return;
+      }
+
+      const thought = saveThoughtRecord(req.authUser!, {
+        id: body.id ? String(body.id) : undefined,
+        title,
+        body: text,
+        theme,
+      });
+      res.status(201).json({ thought });
+    } catch (err) {
+      res.status(403).json({
+        error: err instanceof Error ? err.message : 'Unable to save thought.',
+      });
+    }
+  });
+
+  app.delete('/api/thoughts/:id', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    try {
+      deleteThoughtRecord(req.authUser!, String(req.params.id));
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(403).json({
+        error: err instanceof Error ? err.message : 'Unable to delete thought.',
+      });
+    }
+  });
+
+  // Article Reflections
+  app.get('/api/articles/:articleId/reflections', (req: Request, res: Response) => {
+    const articleId = String(req.params.articleId);
+    const user = extractBearerUser(req);
+    const article = getArticleById(articleId);
+    if (!article) {
+      res.json({ reflections: [] });
+      return;
+    }
+    if (article.status !== 'published' && user?.role !== 'author') {
+      res.status(403).json({ error: 'Reflections are only visible for published articles.' });
+      return;
+    }
+    res.json({ reflections: listReflections(articleId) });
+  });
+
+  app.post(
+    '/api/articles/:articleId/reflections',
+    requireAuth,
+    (req: AuthenticatedRequest, res: Response) => {
       try {
-        await verifyFirebaseAdminToken(idToken);
-      } catch (authErr) {
-        res.status(403).json({
-          error: authErr instanceof Error ? authErr.message : 'Unauthorized access.',
+        const articleId = String(req.params.articleId);
+        const body = String((req.body as { body?: string }).body ?? '').trim();
+        if (!body) {
+          res.status(400).json({ error: 'Please write a brief reflection before posting.' });
+          return;
+        }
+        const reflection = addReflectionRecord(req.authUser!, articleId, body);
+        res.status(201).json({ reflection });
+      } catch (err) {
+        res.status(400).json({
+          error: err instanceof Error ? err.message : 'Unable to post reflection.',
         });
-        return;
       }
+    },
+  );
 
+  app.delete(
+    '/api/articles/:articleId/reflections/:reflectionId',
+    requireAuth,
+    (req: AuthenticatedRequest, res: Response) => {
+      try {
+        deleteReflectionRecord(
+          req.authUser!,
+          String(req.params.articleId),
+          String(req.params.reflectionId),
+        );
+        res.json({ ok: true });
+      } catch (err) {
+        res.status(403).json({
+          error: err instanceof Error ? err.message : 'Unable to remove reflection.',
+        });
+      }
+    },
+  );
+
+  // Newsletter Subscribers & Contact Letters
+  app.post('/api/subscribers', (req: Request, res: Response) => {
+    const email = String((req.body as { email?: string }).email ?? '')
+      .trim()
+      .toLowerCase();
+    if (!EMAIL_REGEX.test(email) || email.length > 160) {
+      res.status(400).json({ error: 'Please enter a valid email address.' });
+      return;
+    }
+    addSubscriberRecord(email);
+    res.status(201).json({ ok: true });
+  });
+
+  app.post('/api/messages', (req: Request, res: Response) => {
+    const body = req.body as {
+      name?: string;
+      email?: string;
+      subject?: string;
+      message?: string;
+    };
+    const name = String(body.name ?? '').trim();
+    const email = String(body.email ?? '')
+      .trim()
+      .toLowerCase();
+    const subject = String(body.subject ?? '').trim();
+    const message = String(body.message ?? '').trim();
+
+    if (!name || !subject || !message) {
+      res.status(400).json({ error: 'Please complete all fields before sending your letter.' });
+      return;
+    }
+    if (!EMAIL_REGEX.test(email) || email.length > 160) {
+      res.status(400).json({ error: 'Please provide a valid email address.' });
+      return;
+    }
+
+    addContactMessageRecord({ name, email, subject, message });
+    res.status(201).json({ ok: true });
+  });
+
+  app.patch('/api/messages/:id', requireAuthor, (req: AuthenticatedRequest, res: Response) => {
+    const status = (req.body as { status?: string }).status;
+    if (status !== 'unread' && status !== 'read' && status !== 'archived') {
+      res.status(400).json({ error: 'Invalid status value.' });
+      return;
+    }
+    updateMessageStatusRecord(String(req.params.id), status);
+    res.json({ ok: true });
+  });
+
+  app.delete('/api/messages/:id', requireAuthor, (req: AuthenticatedRequest, res: Response) => {
+    deleteMessageRecord(String(req.params.id));
+    res.json({ ok: true });
+  });
+
+  // AI Writing Assistant (Author only)
+  app.post('/api/assistant', requireAuthor, async (req: AuthenticatedRequest, res: Response) => {
+    try {
       const body = req.body as {
         mode?: AssistantMode;
         prompt?: string;
@@ -473,7 +811,7 @@ ${userPrompt || 'Help me think through the next step for this piece.'}`;
     } catch (error) {
       console.error('Editorial assistant error:', error);
       const message =
-        error instanceof Error ? error.message : 'Unable to reach the Editorial Companion.';
+        error instanceof Error ? error.message : 'Unable to reach the Writing Assistant.';
       res.status(502).json({ error: message });
     }
   });

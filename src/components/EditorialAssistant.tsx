@@ -82,7 +82,7 @@ export const EditorialAssistant: React.FC<EditorialAssistantProps> = ({
   onInsertProse,
   onApplyMetadata,
 }) => {
-  const { user } = useEditorial();
+  const { user, authToken } = useEditorial();
   const [messages, setMessages] = useState<AssistantMessage[]>([
     {
       id: 'welcome',
@@ -112,8 +112,8 @@ export const EditorialAssistant: React.FC<EditorialAssistantProps> = ({
     customPrompt: string,
     userLabel: string,
   ) => {
-    if (!user) {
-      setErrorMsg('Please sign in with your verified owner account to use the Writing Assistant.');
+    if (!user || !authToken) {
+      setErrorMsg('Please sign in with your author account to use the Writing Assistant.');
       return;
     }
 
@@ -127,12 +127,11 @@ export const EditorialAssistant: React.FC<EditorialAssistantProps> = ({
     setMessages((prev) => [...prev, { id: userMsgId, role: 'user', text: userLabel }]);
 
     try {
-      const idToken = await user.getIdToken();
       const response = await fetch('/api/assistant', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`,
+          Authorization: `Bearer ${authToken}`,
         },
         body: JSON.stringify({
           mode,
