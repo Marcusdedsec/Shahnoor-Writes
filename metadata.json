@@ -1,0 +1,6 @@
+{
+  "name": "SHAH NOOR WRITES",
+  "description": "A Kashmiri-inspired independent literary magazine and editorial journal for essays, stories, reflections, and long-form writing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

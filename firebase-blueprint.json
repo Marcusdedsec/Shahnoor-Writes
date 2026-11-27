@@ -1,0 +1,236 @@
+{
+  "entities": {
+    "Article": {
+      "title": "Article",
+      "description": "An editorial essay, story, reflection, or literary article published on SHAH NOOR WRITES.",
+      "type": "object",
+      "properties": {
+        "slug": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140,
+          "pattern": "^[a-z0-9\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "subtitle": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 280
+        },
+        "excerpt": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 500
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80000
+        },
+        "coverImage": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 350000
+        },
+        "coverCaption": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50
+        },
+        "tags": {
+          "type": "array"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "published", "scheduled"]
+        },
+        "featured": {
+          "type": "boolean"
+        },
+        "isSample": {
+          "type": "boolean"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "readingTimeMinutes": {
+          "type": "integer"
+        },
+        "seoTitle": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 180
+        },
+        "seoDescription": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 320
+        },
+        "publishDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "publishAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "slug",
+        "title",
+        "subtitle",
+        "excerpt",
+        "content",
+        "coverImage",
+        "coverCaption",
+        "category",
+        "tags",
+        "status",
+        "featured",
+        "isSample",
+        "authorName",
+        "authorId",
+        "readingTimeMinutes",
+        "seoTitle",
+        "seoDescription",
+        "publishDate",
+        "publishAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Editorial section or category taxonomy entry.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 50 },
+        "slug": { "type": "string", "minLength": 1, "maxLength": 60, "pattern": "^[a-z0-9\\-]+$" },
+        "description": { "type": "string", "minLength": 0, "maxLength": 300 },
+        "accent": { "type": "string", "minLength": 1, "maxLength": 30 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "slug", "description", "accent", "createdAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public author/reader display profile without PII.",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "bio": { "type": "string", "minLength": 0, "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["displayName", "bio", "createdAt", "updatedAt"]
+    },
+    "Thought": {
+      "title": "Thought",
+      "description": "Community thought, reflection, or literary note shared by a verified member.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "body": { "type": "string", "minLength": 1, "maxLength": 8000 },
+        "theme": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "authorName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "authorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "body", "theme", "authorName", "authorId", "createdAt", "updatedAt"]
+    },
+    "Reflection": {
+      "title": "Reflection",
+      "description": "Reader reflection posted beneath a published article.",
+      "type": "object",
+      "properties": {
+        "articleId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "body": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "authorName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "authorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["articleId", "body", "authorName", "authorId", "createdAt", "updatedAt"]
+    },
+    "Subscriber": {
+      "title": "Subscriber",
+      "description": "Newsletter subscription record containing reader email (PII).",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "minLength": 5, "maxLength": 160, "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "createdAt"]
+    },
+    "ContactMessage": {
+      "title": "ContactMessage",
+      "description": "Reader inquiry or letter submitted via the Contact page.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "email": { "type": "string", "minLength": 5, "maxLength": 160, "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$" },
+        "subject": { "type": "string", "minLength": 1, "maxLength": 180 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 5000 },
+        "status": { "type": "string", "enum": ["unread", "read", "archived"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "email", "subject", "message", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/articles/{articleId}": {
+      "schema": { "$ref": "#/entities/Article" },
+      "description": "Published, scheduled, and draft editorial articles."
+    },
+    "/articles/{articleId}/reflections/{reflectionId}": {
+      "schema": { "$ref": "#/entities/Reflection" },
+      "description": "Reader reflections posted on published articles."
+    },
+    "/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/Category" },
+      "description": "Editorial categories managed by the publication owner."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Public display profiles for registered readers and writers (no PII)."
+    },
+    "/thoughts/{thoughtId}": {
+      "schema": { "$ref": "#/entities/Thought" },
+      "description": "Community thoughts and reflections shared by verified accounts."
+    },
+    "/subscribers/{subscriberId}": {
+      "schema": { "$ref": "#/entities/Subscriber" },
+      "description": "Newsletter subscriber emails, private to admin."
+    },
+    "/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ContactMessage" },
+      "description": "Reader letters from the Contact page, private to admin."
+    }
+  }
+}

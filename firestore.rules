@@ -1,0 +1,315 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Primitive helpers
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isPrimaryAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'realzuhaan@gmail.com';
+    }
+
+    function isAdmin() {
+      return isPrimaryAdmin() ||
+        (isVerifiedUser() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    // Validation Blueprints
+    function isValidArticle(data) {
+      return data.keys().hasAll([
+          'slug', 'title', 'subtitle', 'excerpt', 'content',
+          'coverImage', 'coverCaption', 'category', 'tags',
+          'status', 'featured', 'isSample', 'authorName', 'authorId',
+          'readingTimeMinutes', 'seoTitle', 'seoDescription',
+          'publishDate', 'publishAt', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'slug', 'title', 'subtitle', 'excerpt', 'content',
+          'coverImage', 'coverCaption', 'category', 'tags',
+          'status', 'featured', 'isSample', 'authorName', 'authorId',
+          'readingTimeMinutes', 'seoTitle', 'seoDescription',
+          'publishDate', 'publishAt', 'createdAt', 'updatedAt'
+        ]) &&
+        data.slug is string && data.slug.size() >= 1 && data.slug.size() <= 140 && data.slug.matches('^[a-z0-9\\-]+$') &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 180 &&
+        data.subtitle is string && data.subtitle.size() <= 280 &&
+        data.excerpt is string && data.excerpt.size() <= 500 &&
+        data.content is string && data.content.size() >= 1 && data.content.size() <= 80000 &&
+        data.coverImage is string && data.coverImage.size() <= 350000 &&
+        data.coverCaption is string && data.coverCaption.size() <= 300 &&
+        data.category is string && data.category.size() >= 1 && data.category.size() <= 50 &&
+        data.tags is list && data.tags.size() <= 10 &&
+        (data.tags.size() == 0 || (data.tags[0] is string && data.tags[0].size() <= 40)) &&
+        data.status in ['draft', 'published', 'scheduled'] &&
+        data.featured is bool &&
+        data.isSample is bool &&
+        data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80 &&
+        data.authorId is string && data.authorId.size() >= 1 && data.authorId.size() <= 128 &&
+        data.readingTimeMinutes is int && data.readingTimeMinutes >= 1 && data.readingTimeMinutes <= 180 &&
+        data.seoTitle is string && data.seoTitle.size() <= 180 &&
+        data.seoDescription is string && data.seoDescription.size() <= 320 &&
+        data.publishDate is string && data.publishDate.size() >= 1 && data.publishDate.size() <= 40 &&
+        data.publishAt is timestamp &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidCategory(data) {
+      return data.keys().hasAll(['name', 'slug', 'description', 'accent', 'createdAt']) &&
+        data.keys().hasOnly(['name', 'slug', 'description', 'accent', 'createdAt']) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 50 &&
+        data.slug is string && data.slug.size() >= 1 && data.slug.size() <= 60 && data.slug.matches('^[a-z0-9\\-]+$') &&
+        data.description is string && data.description.size() <= 300 &&
+        data.accent is string && data.accent.size() >= 1 && data.accent.size() <= 30 &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['displayName', 'bio', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['displayName', 'bio', 'createdAt', 'updatedAt']) &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+        data.bio is string && data.bio.size() <= 300 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidThought(data) {
+      return data.keys().hasAll(['title', 'body', 'theme', 'authorName', 'authorId', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['title', 'body', 'theme', 'authorName', 'authorId', 'createdAt', 'updatedAt']) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 140 &&
+        data.body is string && data.body.size() >= 1 && data.body.size() <= 8000 &&
+        data.theme is string && data.theme.size() >= 1 && data.theme.size() <= 40 &&
+        data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80 &&
+        data.authorId is string && data.authorId.size() >= 1 && data.authorId.size() <= 128 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidReflection(data, articleId) {
+      return data.keys().hasAll(['articleId', 'body', 'authorName', 'authorId', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['articleId', 'body', 'authorName', 'authorId', 'createdAt', 'updatedAt']) &&
+        data.articleId is string && data.articleId == articleId &&
+        data.body is string && data.body.size() >= 1 && data.body.size() <= 2000 &&
+        data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80 &&
+        data.authorId is string && data.authorId.size() >= 1 && data.authorId.size() <= 128 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidSubscriber(data) {
+      return data.keys().hasAll(['email', 'createdAt']) &&
+        data.keys().hasOnly(['email', 'createdAt']) &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 160 &&
+        data.email.matches('^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$') &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidContactMessage(data) {
+      return data.keys().hasAll(['name', 'email', 'subject', 'message', 'status', 'createdAt']) &&
+        data.keys().hasOnly(['name', 'email', 'subject', 'message', 'status', 'createdAt']) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 160 &&
+        data.email.matches('^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$') &&
+        data.subject is string && data.subject.size() >= 1 && data.subject.size() <= 180 &&
+        data.message is string && data.message.size() >= 1 && data.message.size() <= 5000 &&
+        data.status in ['unread', 'read', 'archived'] &&
+        data.createdAt is timestamp;
+    }
+
+    // Connection check doc
+    match /test/connection {
+      allow get: if true;
+    }
+
+    // Admin allowlist docs
+    match /admins/{uid} {
+      allow get: if isValidId(uid) && (isPrimaryAdmin() || (isVerifiedUser() && request.auth.uid == uid));
+      allow list, create, update, delete: if isPrimaryAdmin() && isValidId(uid);
+    }
+
+    // Public user display profiles (no PII)
+    match /users/{userId} {
+      allow get: if isValidId(userId);
+      allow list: if false;
+      allow create: if isValidId(userId) &&
+        isSignedIn() &&
+        request.auth.uid == userId &&
+        isValidUserProfile(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(userId) &&
+        isSignedIn() &&
+        request.auth.uid == userId &&
+        isValidUserProfile(incoming()) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'bio', 'updatedAt']);
+      allow delete: if isValidId(userId) && (isAdmin() || (isSignedIn() && request.auth.uid == userId));
+    }
+
+    // Community Thoughts shared by verified accounts
+    match /thoughts/{thoughtId} {
+      allow get: if isValidId(thoughtId);
+      allow list: if existing().authorId is string;
+
+      allow create: if isValidId(thoughtId) &&
+        isVerifiedUser() &&
+        isValidThought(incoming()) &&
+        incoming().authorId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isValidId(thoughtId) &&
+        isVerifiedUser() &&
+        isValidThought(incoming()) &&
+        (existing().authorId == request.auth.uid || isAdmin()) &&
+        incoming().authorId == existing().authorId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['title', 'body', 'theme', 'authorName', 'updatedAt']);
+
+      allow delete: if isValidId(thoughtId) &&
+        (isAdmin() || (isVerifiedUser() && existing().authorId == request.auth.uid));
+    }
+
+    // Articles collection + Reader Reflections subcollection
+    match /articles/{articleId} {
+      allow get: if isValidId(articleId) && (
+        existing().status == 'published' ||
+        (existing().status == 'scheduled' && existing().publishAt <= request.time) ||
+        isAdmin()
+      );
+      allow list: if existing().status == 'published' ||
+        (existing().status == 'scheduled' && existing().publishAt <= request.time) ||
+        isPrimaryAdmin();
+
+      allow create: if isValidId(articleId) &&
+        isAdmin() &&
+        isValidArticle(incoming()) &&
+        incoming().authorId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isValidId(articleId) &&
+        isAdmin() &&
+        isValidArticle(incoming()) &&
+        incoming().authorId == existing().authorId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'slug', 'title', 'subtitle', 'excerpt', 'content',
+          'coverImage', 'coverCaption', 'category', 'tags',
+          'status', 'featured', 'isSample', 'authorName',
+          'readingTimeMinutes', 'seoTitle', 'seoDescription',
+          'publishDate', 'publishAt', 'updatedAt'
+        ]);
+
+      allow delete: if isValidId(articleId) && isAdmin();
+
+      match /reflections/{reflectionId} {
+        allow get: if isValidId(articleId) &&
+          isValidId(reflectionId) &&
+          get(/databases/$(database)/documents/articles/$(articleId)).data.status == 'published';
+        allow list: if existing().articleId == articleId;
+
+        allow create: if isValidId(articleId) &&
+          isValidId(reflectionId) &&
+          isVerifiedUser() &&
+          isValidReflection(incoming(), articleId) &&
+          incoming().authorId == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          exists(/databases/$(database)/documents/articles/$(articleId)) &&
+          get(/databases/$(database)/documents/articles/$(articleId)).data.status == 'published';
+
+        allow update: if isValidId(articleId) &&
+          isValidId(reflectionId) &&
+          isVerifiedUser() &&
+          isValidReflection(incoming(), articleId) &&
+          (existing().authorId == request.auth.uid || isAdmin()) &&
+          incoming().authorId == existing().authorId &&
+          incoming().articleId == existing().articleId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['body', 'authorName', 'updatedAt']);
+
+        allow delete: if isValidId(articleId) &&
+          isValidId(reflectionId) &&
+          (isAdmin() || (isVerifiedUser() && existing().authorId == request.auth.uid));
+      }
+    }
+
+    // Categories collection
+    match /categories/{categoryId} {
+      allow get: if isValidId(categoryId);
+      allow list: if true;
+
+      allow create: if isValidId(categoryId) &&
+        isAdmin() &&
+        isValidCategory(incoming()) &&
+        incoming().createdAt == request.time;
+
+      allow update: if isValidId(categoryId) &&
+        isAdmin() &&
+        isValidCategory(incoming()) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'slug', 'description', 'accent'
+        ]);
+
+      allow delete: if isValidId(categoryId) && isAdmin();
+    }
+
+    // Newsletter Subscribers (PII isolated to admin read)
+    match /subscribers/{subscriberId} {
+      allow get, delete: if isValidId(subscriberId) && isAdmin();
+      allow list: if isPrimaryAdmin();
+      allow create: if isValidId(subscriberId) &&
+        isValidSubscriber(incoming()) &&
+        incoming().createdAt == request.time;
+      allow update: if false;
+    }
+
+    // Contact Messages (PII isolated to admin read)
+    match /messages/{messageId} {
+      allow get, delete: if isValidId(messageId) && isAdmin();
+      allow list: if isPrimaryAdmin();
+      allow create: if isValidId(messageId) &&
+        isValidContactMessage(incoming()) &&
+        incoming().status == 'unread' &&
+        incoming().createdAt == request.time;
+      allow update: if isValidId(messageId) &&
+        isAdmin() &&
+        isValidContactMessage(incoming()) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().email == existing().email &&
+        incoming().name == existing().name &&
+        incoming().subject == existing().subject &&
+        incoming().message == existing().message &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status']);
+    }
+  }
+}
