@@ -188,6 +188,17 @@
       },
       "required": ["email", "createdAt"]
     },
+    "AuthorConfig": {
+      "title": "AuthorConfig",
+      "description": "Publication author ownership record claimed during initial Author Studio setup.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "displayName", "createdAt"]
+    },
     "ContactMessage": {
       "title": "ContactMessage",
       "description": "Reader inquiry or letter submitted via the Contact page.",
@@ -204,6 +215,10 @@
     }
   },
   "firestore": {
+    "/appConfig/{configId}": {
+      "schema": { "$ref": "#/entities/AuthorConfig" },
+      "description": "Single-claim publication owner record."
+    },
     "/articles/{articleId}": {
       "schema": { "$ref": "#/entities/Article" },
       "description": "Published, scheduled, and draft editorial articles."
@@ -222,7 +237,7 @@
     },
     "/thoughts/{thoughtId}": {
       "schema": { "$ref": "#/entities/Thought" },
-      "description": "Community thoughts and reflections shared by verified accounts."
+      "description": "Community thoughts and reflections shared by signed-in members."
     },
     "/subscribers/{subscriberId}": {
       "schema": { "$ref": "#/entities/Subscriber" },

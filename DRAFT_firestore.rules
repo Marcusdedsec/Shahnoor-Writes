@@ -32,12 +32,27 @@ service cloud.firestore {
       return isVerifiedUser() && request.auth.token.email == 'realzuhaan@gmail.com';
     }
 
+    function isClaimedAuthor() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/appConfig/author) &&
+        get(/databases/$(database)/documents/appConfig/author).data.ownerUid == request.auth.uid;
+    }
+
     function isAdmin() {
-      return isPrimaryAdmin() ||
-        (isVerifiedUser() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+      return isClaimedAuthor() ||
+        isPrimaryAdmin() ||
+        (isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
     }
 
     // Validation Blueprints
+    function isValidAuthorConfig(data) {
+      return data.keys().hasAll(['ownerUid', 'displayName', 'createdAt']) &&
+        data.keys().hasOnly(['ownerUid', 'displayName', 'createdAt']) &&
+        data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+        data.createdAt is timestamp;
+    }
+
     function isValidArticle(data) {
       return data.keys().hasAll([
           'slug', 'title', 'subtitle', 'excerpt', 'content',
@@ -144,10 +159,23 @@ service cloud.firestore {
       allow get: if true;
     }
 
+    // Single-claim Author Studio owner record (no PII)
+    match /appConfig/{configId} {
+      allow get: if configId == 'author';
+      allow list: if false;
+      allow create: if configId == 'author' &&
+        isSignedIn() &&
+        !exists(/databases/$(database)/documents/appConfig/author) &&
+        isValidAuthorConfig(incoming()) &&
+        incoming().ownerUid == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update, delete: if configId == 'author' && isAdmin();
+    }
+
     // Admin allowlist docs
     match /admins/{uid} {
-      allow get: if isValidId(uid) && (isPrimaryAdmin() || (isVerifiedUser() && request.auth.uid == uid));
-      allow list, create, update, delete: if isPrimaryAdmin() && isValidId(uid);
+      allow get: if isValidId(uid) && (isAdmin() || (isSignedIn() && request.auth.uid == uid));
+      allow list, create, update, delete: if isAdmin() && isValidId(uid);
     }
 
     // Public user display profiles (no PII)
@@ -170,20 +198,20 @@ service cloud.firestore {
       allow delete: if isValidId(userId) && (isAdmin() || (isSignedIn() && request.auth.uid == userId));
     }
 
-    // Community Thoughts shared by verified accounts
+    // Community Thoughts shared by signed-in email/password members
     match /thoughts/{thoughtId} {
       allow get: if isValidId(thoughtId);
       allow list: if existing().authorId is string;
 
       allow create: if isValidId(thoughtId) &&
-        isVerifiedUser() &&
+        isSignedIn() &&
         isValidThought(incoming()) &&
         incoming().authorId == request.auth.uid &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
 
       allow update: if isValidId(thoughtId) &&
-        isVerifiedUser() &&
+        isSignedIn() &&
         isValidThought(incoming()) &&
         (existing().authorId == request.auth.uid || isAdmin()) &&
         incoming().authorId == existing().authorId &&
@@ -192,7 +220,7 @@ service cloud.firestore {
         incoming().diff(existing()).affectedKeys().hasOnly(['title', 'body', 'theme', 'authorName', 'updatedAt']);
 
       allow delete: if isValidId(thoughtId) &&
-        (isAdmin() || (isVerifiedUser() && existing().authorId == request.auth.uid));
+        (isAdmin() || (isSignedIn() && existing().authorId == request.auth.uid));
     }
 
     // Articles collection + Reader Reflections subcollection
@@ -204,7 +232,8 @@ service cloud.firestore {
       );
       allow list: if existing().status == 'published' ||
         (existing().status == 'scheduled' && existing().publishAt <= request.time) ||
-        isPrimaryAdmin();
+        (isSignedIn() && existing().authorId == request.auth.uid) ||
+        isAdmin();
 
       allow create: if isValidId(articleId) &&
         isAdmin() &&
@@ -237,7 +266,7 @@ service cloud.firestore {
 
         allow create: if isValidId(articleId) &&
           isValidId(reflectionId) &&
-          isVerifiedUser() &&
+          isSignedIn() &&
           isValidReflection(incoming(), articleId) &&
           incoming().authorId == request.auth.uid &&
           incoming().createdAt == request.time &&
@@ -247,7 +276,7 @@ service cloud.firestore {
 
         allow update: if isValidId(articleId) &&
           isValidId(reflectionId) &&
-          isVerifiedUser() &&
+          isSignedIn() &&
           isValidReflection(incoming(), articleId) &&
           (existing().authorId == request.auth.uid || isAdmin()) &&
           incoming().authorId == existing().authorId &&
@@ -258,7 +287,7 @@ service cloud.firestore {
 
         allow delete: if isValidId(articleId) &&
           isValidId(reflectionId) &&
-          (isAdmin() || (isVerifiedUser() && existing().authorId == request.auth.uid));
+          (isAdmin() || (isSignedIn() && existing().authorId == request.auth.uid));
       }
     }
 
@@ -286,7 +315,7 @@ service cloud.firestore {
     // Newsletter Subscribers (PII isolated to admin read)
     match /subscribers/{subscriberId} {
       allow get, delete: if isValidId(subscriberId) && isAdmin();
-      allow list: if isPrimaryAdmin();
+      allow list: if isAdmin();
       allow create: if isValidId(subscriberId) &&
         isValidSubscriber(incoming()) &&
         incoming().createdAt == request.time;
@@ -296,7 +325,7 @@ service cloud.firestore {
     // Contact Messages (PII isolated to admin read)
     match /messages/{messageId} {
       allow get, delete: if isValidId(messageId) && isAdmin();
-      allow list: if isPrimaryAdmin();
+      allow list: if isAdmin();
       allow create: if isValidId(messageId) &&
         isValidContactMessage(incoming()) &&
         incoming().status == 'unread' &&

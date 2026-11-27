@@ -116,7 +116,7 @@ export const ThoughtsPage: React.FC = () => {
                 Have a thought to share?
               </h2>
               <p className="font-editorial text-sm text-[#493528]/80">
-                Create an account with your email ID or sign in to publish your own reflections here.
+                Create an account with your email or sign in to publish your own reflections here.
               </p>
             </div>
             <Link
@@ -124,24 +124,7 @@ export const ThoughtsPage: React.FC = () => {
               className="inline-flex items-center justify-center gap-2 px-6 py-3 text-xs font-medium uppercase tracking-wider bg-[#493528] text-[#F2EBDD] hover:bg-[#9C443B] transition-colors shrink-0"
             >
               <UserPlus className="w-3.5 h-3.5" />
-              Create Account / Sign In
-            </Link>
-          </div>
-        ) : !user.emailVerified ? (
-          <div className="p-6 bg-[#9C443B]/8 border border-[#9C443B]/25 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h2 className="font-display text-2xl font-medium text-[#25231F] mb-1">
-                Verify your email to post
-              </h2>
-              <p className="font-editorial text-sm text-[#493528]/85">
-                Signed in as {user.email}. Confirm your verification link on the Account page to publish thoughts.
-              </p>
-            </div>
-            <Link
-              to="/account"
-              className="px-5 py-2.5 text-xs font-medium uppercase tracking-wider bg-[#9C443B] text-[#F2EBDD] hover:bg-[#493528] shrink-0 text-center"
-            >
-              Verify Account
+              Join / Sign In
             </Link>
           </div>
         ) : (
@@ -302,7 +285,7 @@ export const ThoughtsPage: React.FC = () => {
         <div className="space-y-6">
           {filteredThoughts.map((item) => {
             const canModify =
-              Boolean(user?.emailVerified) && (item.authorId === user?.uid || isAdmin);
+              Boolean(user) && (item.authorId === user?.uid || isAdmin);
             const dateStr = item.createdAtMillis
               ? new Date(item.createdAtMillis).toLocaleDateString('en-US', {
                   year: 'numeric',

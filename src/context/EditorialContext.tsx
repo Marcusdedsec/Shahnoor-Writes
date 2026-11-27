@@ -3,9 +3,7 @@ import {
   User,
   createUserWithEmailAndPassword,
   onAuthStateChanged,
-  sendEmailVerification,
   signInWithEmailAndPassword,
-  signInWithPopup,
   signOut,
   updateProfile,
 } from 'firebase/auth';
@@ -28,7 +26,6 @@ import {
   PRIMARY_ADMIN_EMAIL,
   auth,
   db,
-  googleProvider,
   handleFirestoreError,
 } from '../firebase';
 import { DEFAULT_CATEGORIES } from '../data/sampleArticles';
@@ -43,10 +40,17 @@ import {
 } from '../types/editorial';
 import { calculateReadingTime, slugify } from '../utils/editorialUtils';
 
+export interface AuthorConfig {
+  ownerUid: string;
+  displayName: string;
+}
+
 interface EditorialContextValue {
   user: User | null;
   userProfile: UserProfile | null;
   authReady: boolean;
+  authorConfig: AuthorConfig | null;
+  authorConfigLoaded: boolean;
   isAdmin: boolean;
   loadingArticles: boolean;
   loadingThoughts: boolean;
@@ -56,16 +60,18 @@ interface EditorialContextValue {
   thoughts: CommunityThought[];
   subscribers: Subscriber[];
   messages: ContactMessage[];
-  signInWithGoogle: () => Promise<void>;
   signUpWithEmail: (payload: {
     displayName: string;
     email: string;
     password: string;
     bio?: string;
   }) => Promise<void>;
+  createAuthorProfile: (payload: {
+    displayName: string;
+    email: string;
+    password: string;
+  }) => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
-  resendVerificationEmail: () => Promise<void>;
-  refreshUserSession: () => Promise<boolean>;
   updateUserProfile: (displayName: string, bio: string) => Promise<void>;
   signOutUser: () => Promise<void>;
   saveArticle: (
@@ -148,22 +154,13 @@ function mapDocToThought(id: string, data: Record<string, unknown>): CommunityTh
   };
 }
 
-async function resolveAdminStatus(nextUser: User | null): Promise<boolean> {
-  if (!nextUser || !nextUser.emailVerified) return false;
-  if (nextUser.email?.toLowerCase() === PRIMARY_ADMIN_EMAIL) return true;
-  try {
-    const adminSnap = await getDoc(doc(db, 'admins', nextUser.uid));
-    return adminSnap.exists();
-  } catch {
-    return false;
-  }
-}
-
 export const EditorialProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [authReady, setAuthReady] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [authorConfig, setAuthorConfig] = useState<AuthorConfig | null>(null);
+  const [authorConfigLoaded, setAuthorConfigLoaded] = useState(false);
+  const [adminAllowlisted, setAdminAllowlisted] = useState(false);
 
   const [dbPublished, setDbPublished] = useState<Article[]>([]);
   const [dbScheduledReady, setDbScheduledReady] = useState<Article[]>([]);
@@ -178,13 +175,53 @@ export const EditorialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (nextUser) => {
       setUser(nextUser);
-      setIsAdmin(await resolveAdminStatus(nextUser));
+      if (!nextUser) {
+        setAdminAllowlisted(false);
+        setAuthReady(true);
+        return;
+      }
+      try {
+        const adminSnap = await getDoc(doc(db, 'admins', nextUser.uid));
+        setAdminAllowlisted(adminSnap.exists());
+      } catch {
+        setAdminAllowlisted(false);
+      }
       setAuthReady(true);
     });
     return () => unsub();
   }, []);
 
-  // Subscribe to signed-in user's public profile (/users/{uid})
+  // Subscribe to single-claim Author Studio config (/appConfig/author)
+  useEffect(() => {
+    const unsub = onSnapshot(
+      doc(db, 'appConfig', 'author'),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data() as Record<string, unknown>;
+          setAuthorConfig({
+            ownerUid: String(data.ownerUid ?? ''),
+            displayName: String(data.displayName ?? 'Author'),
+          });
+        } else {
+          setAuthorConfig(null);
+        }
+        setAuthorConfigLoaded(true);
+      },
+      () => {
+        setAuthorConfigLoaded(true);
+      },
+    );
+    return () => unsub();
+  }, []);
+
+  const isAdmin = useMemo(() => {
+    if (!user) return false;
+    if (authorConfig && authorConfig.ownerUid === user.uid) return true;
+    if (user.emailVerified && user.email?.toLowerCase() === PRIMARY_ADMIN_EMAIL) return true;
+    return adminAllowlisted;
+  }, [user, authorConfig, adminAllowlisted]);
+
+  // Subscribe to signed-in user's public profile (/users/{uid}) without auto-write race
   useEffect(() => {
     if (!user) {
       setUserProfile(null);
@@ -194,7 +231,7 @@ export const EditorialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const profileRef = doc(db, 'users', user.uid);
     const unsub = onSnapshot(
       profileRef,
-      async (snap) => {
+      (snap) => {
         if (snap.exists()) {
           const data = snap.data() as Record<string, unknown>;
           setUserProfile({
@@ -207,20 +244,7 @@ export const EditorialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               data.updatedAt instanceof Timestamp ? data.updatedAt.toMillis() : undefined,
           });
         } else {
-          // Ensure a clean public profile document exists for Google/new sign-ins
-          const fallbackName = (user.displayName || user.email?.split('@')[0] || 'Reader')
-            .trim()
-            .slice(0, 80);
-          try {
-            await setDoc(profileRef, {
-              displayName: fallbackName || 'Reader',
-              bio: '',
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            });
-          } catch {
-            // Ignore transient race if signup is writing the profile concurrently
-          }
+          setUserProfile(null);
         }
       },
       () => {},
@@ -383,8 +407,25 @@ export const EditorialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return Array.from(map.values());
   }, [dbCategories]);
 
-  const signInWithGoogle = async () => {
-    await signInWithPopup(auth, googleProvider);
+  const ensureUserProfileDoc = async (targetUser: User, explicitName?: string, explicitBio = '') => {
+    const profileRef = doc(db, 'users', targetUser.uid);
+    const snap = await getDoc(profileRef);
+    if (!snap.exists()) {
+      const cleanName = (
+        explicitName ||
+        targetUser.displayName ||
+        targetUser.email?.split('@')[0] ||
+        'Reader'
+      )
+        .trim()
+        .slice(0, 80);
+      await setDoc(profileRef, {
+        displayName: cleanName || 'Reader',
+        bio: explicitBio.trim().slice(0, 300),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
   };
 
   const signUpWithEmail: EditorialContextValue['signUpWithEmail'] = async ({
@@ -394,39 +435,57 @@ export const EditorialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     bio = '',
   }) => {
     const cleanName = displayName.trim().slice(0, 80);
-    if (!cleanName) throw new Error('Please enter your display name.');
+    if (!cleanName) throw new Error('Please enter your name.');
     const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
     await updateProfile(cred.user, { displayName: cleanName });
     try {
-      await setDoc(doc(db, 'users', cred.user.uid), {
-        displayName: cleanName,
-        bio: bio.trim().slice(0, 300),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+      await ensureUserProfileDoc(cred.user, cleanName, bio);
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, `users/${cred.user.uid}`);
     }
-    await sendEmailVerification(cred.user);
+  };
+
+  const createAuthorProfile: EditorialContextValue['createAuthorProfile'] = async ({
+    displayName,
+    email,
+    password,
+  }) => {
+    const cleanName = displayName.trim().slice(0, 80);
+    if (!cleanName) throw new Error('Please enter your author name.');
+
+    const authorRef = doc(db, 'appConfig', 'author');
+    const existingAuthor = await getDoc(authorRef);
+    if (existingAuthor.exists()) {
+      throw new Error('An author profile already exists. Please sign in with your email and password.');
+    }
+
+    const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+    await updateProfile(cred.user, { displayName: cleanName });
+
+    try {
+      await ensureUserProfileDoc(cred.user, cleanName, '');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, `users/${cred.user.uid}`);
+    }
+
+    try {
+      await setDoc(authorRef, {
+        ownerUid: cred.user.uid,
+        displayName: cleanName,
+        createdAt: serverTimestamp(),
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'appConfig/author');
+    }
   };
 
   const signInWithEmail = async (email: string, password: string) => {
-    await signInWithEmailAndPassword(auth, email.trim(), password);
-  };
-
-  const resendVerificationEmail = async () => {
-    if (!auth.currentUser) throw new Error('Please sign in first.');
-    await sendEmailVerification(auth.currentUser);
-  };
-
-  const refreshUserSession = async () => {
-    if (!auth.currentUser) return false;
-    await auth.currentUser.reload();
-    await auth.currentUser.getIdToken(true);
-    const refreshed = auth.currentUser;
-    setUser(refreshed ? ({ ...refreshed } as User) : null);
-    setIsAdmin(await resolveAdminStatus(refreshed));
-    return Boolean(refreshed?.emailVerified);
+    const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+    try {
+      await ensureUserProfileDoc(cred.user);
+    } catch {
+      // Non-fatal if profile read/create races transiently
+    }
   };
 
   const updateUserProfile = async (displayName: string, bio: string) => {
@@ -470,7 +529,7 @@ export const EditorialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const saveArticle: EditorialContextValue['saveArticle'] = async (draft) => {
     if (!user || !isAdmin) {
-      throw new Error('Only the verified publication owner may save or publish articles.');
+      throw new Error('Only the publication author may save or publish articles.');
     }
 
     const cleanSlug = slugify(draft.slug || draft.title) || `essay-${Date.now()}`;
@@ -509,7 +568,7 @@ export const EditorialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       status: draft.status,
       featured: Boolean(draft.featured),
       isSample: false,
-      authorName: (draft.authorName || 'Shahnoor').trim().slice(0, 80),
+      authorName: (draft.authorName || authorConfig?.displayName || 'Shahnoor').trim().slice(0, 80),
       readingTimeMinutes: readingTime,
       seoTitle: draft.seoTitle.trim().slice(0, 180),
       seoDescription: draft.seoDescription.trim().slice(0, 320),
@@ -544,7 +603,7 @@ export const EditorialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const deleteArticle = async (id: string) => {
-    if (!user || !isAdmin) throw new Error('Admin authorization required.');
+    if (!user || !isAdmin) throw new Error('Author access required.');
     try {
       await deleteDoc(doc(db, 'articles', id));
     } catch (error) {
@@ -553,7 +612,7 @@ export const EditorialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const addCategory: EditorialContextValue['addCategory'] = async (cat) => {
-    if (!user || !isAdmin) throw new Error('Admin authorization required.');
+    if (!user || !isAdmin) throw new Error('Author access required.');
     const slug = slugify(cat.name).slice(0, 60);
     if (!slug) throw new Error('Please provide a valid category name.');
     try {
@@ -570,7 +629,7 @@ export const EditorialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const deleteCategory = async (id: string) => {
-    if (!user || !isAdmin) throw new Error('Admin authorization required.');
+    if (!user || !isAdmin) throw new Error('Author access required.');
     try {
       await deleteDoc(doc(db, 'categories', id));
     } catch (error) {
@@ -581,9 +640,6 @@ export const EditorialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const saveThought: EditorialContextValue['saveThought'] = async (draft) => {
     const activeUser = auth.currentUser;
     if (!activeUser) throw new Error('Please sign in to share a thought.');
-    if (!activeUser.emailVerified) {
-      throw new Error('Please verify your email address before sharing thoughts.');
-    }
 
     const cleanTitle = draft.title.trim().slice(0, 140);
     const cleanBody = draft.body.trim().slice(0, 8000);
@@ -689,9 +745,6 @@ export const EditorialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const addArticleReflection = async (articleId: string, body: string) => {
     const activeUser = auth.currentUser;
     if (!activeUser) throw new Error('Please sign in to leave a reflection.');
-    if (!activeUser.emailVerified) {
-      throw new Error('Please verify your email address before posting a reflection.');
-    }
     const cleanBody = body.trim().slice(0, 2000);
     if (!cleanBody) throw new Error('Please write a brief reflection before posting.');
 
@@ -777,7 +830,7 @@ export const EditorialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const updateMessageStatus = async (id: string, status: ContactMessage['status']) => {
-    if (!user || !isAdmin) throw new Error('Admin authorization required.');
+    if (!user || !isAdmin) throw new Error('Author access required.');
     try {
       await updateDoc(doc(db, 'messages', id), { status });
     } catch (error) {
@@ -786,7 +839,7 @@ export const EditorialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const deleteMessage = async (id: string) => {
-    if (!user || !isAdmin) throw new Error('Admin authorization required.');
+    if (!user || !isAdmin) throw new Error('Author access required.');
     try {
       await deleteDoc(doc(db, 'messages', id));
     } catch (error) {
@@ -798,6 +851,8 @@ export const EditorialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     user,
     userProfile,
     authReady,
+    authorConfig,
+    authorConfigLoaded,
     isAdmin,
     loadingArticles,
     loadingThoughts,
@@ -807,11 +862,9 @@ export const EditorialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     thoughts,
     subscribers,
     messages,
-    signInWithGoogle,
     signUpWithEmail,
+    createAuthorProfile,
     signInWithEmail,
-    resendVerificationEmail,
-    refreshUserSession,
     updateUserProfile,
     signOutUser,
     saveArticle,

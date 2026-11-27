@@ -4,38 +4,11 @@ import {
   CheckCircle2,
   Feather,
   LogOut,
-  MailCheck,
-  RefreshCw,
   UserPlus,
 } from 'lucide-react';
 import { useEditorial } from '../context/EditorialContext';
+import { formatAuthError } from '../utils/authError';
 import { ChinarLeafMark, ManuscriptDivider } from '../components/KashmiriOrnaments';
-
-function friendlyAuthError(err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err);
-  if (msg.includes('auth/email-already-in-use')) {
-    return 'An account with this email ID already exists. Try signing in instead, or use another email address.';
-  }
-  if (msg.includes('auth/invalid-credential') || msg.includes('auth/wrong-password')) {
-    return 'Incorrect email or password. Please check your credentials and try again.';
-  }
-  if (msg.includes('auth/user-not-found')) {
-    return 'No account found with that email ID. Switch to Create Account to register.';
-  }
-  if (msg.includes('auth/weak-password')) {
-    return 'Please choose a stronger password (at least 6 characters).';
-  }
-  if (msg.includes('auth/invalid-email')) {
-    return 'Please enter a valid email address.';
-  }
-  if (msg.includes('auth/operation-not-allowed')) {
-    return 'Email & password sign-in is not yet enabled in Firebase Authentication for this project.';
-  }
-  if (msg.includes('auth/too-many-requests')) {
-    return 'Too many attempts. Please pause a moment before trying again.';
-  }
-  return msg;
-}
 
 export const AccountPage: React.FC = () => {
   const {
@@ -45,9 +18,6 @@ export const AccountPage: React.FC = () => {
     isAdmin,
     signUpWithEmail,
     signInWithEmail,
-    signInWithGoogle,
-    resendVerificationEmail,
-    refreshUserSession,
     updateUserProfile,
     signOutUser,
   } = useEditorial();
@@ -66,7 +36,7 @@ export const AccountPage: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    document.title = 'Reader Account — SHAHNOOR Writes';
+    document.title = 'Join & Sign In — SHAHNOOR Writes';
   }, []);
 
   useEffect(() => {
@@ -86,61 +56,14 @@ export const AccountPage: React.FC = () => {
     try {
       if (authMode === 'signup') {
         await signUpWithEmail({ displayName, email, password, bio });
-        setNotice(
-          'Your account has been created and a verification link was sent to your email ID. Please verify your email to share thoughts and reflections.',
-        );
+        setNotice('Welcome! Your account is ready — you can share your thoughts right away.');
         setPassword('');
       } else {
         await signInWithEmail(email, password);
         setPassword('');
       }
     } catch (err) {
-      setErrorMsg(friendlyAuthError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleGoogleSignIn = async () => {
-    setErrorMsg(null);
-    setNotice(null);
-    setBusy(true);
-    try {
-      await signInWithGoogle();
-    } catch (err) {
-      setErrorMsg(friendlyAuthError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleResend = async () => {
-    setErrorMsg(null);
-    setNotice(null);
-    setBusy(true);
-    try {
-      await resendVerificationEmail();
-      setNotice('A fresh verification link has been sent to your email address.');
-    } catch (err) {
-      setErrorMsg(friendlyAuthError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleRefreshVerification = async () => {
-    setErrorMsg(null);
-    setNotice(null);
-    setBusy(true);
-    try {
-      const verified = await refreshUserSession();
-      if (verified) {
-        setNotice('Email verified! You can now share thoughts and article reflections.');
-      } else {
-        setNotice('Your email is still pending verification. Please check your inbox and click the link.');
-      }
-    } catch (err) {
-      setErrorMsg(friendlyAuthError(err));
+      setErrorMsg(formatAuthError(err));
     } finally {
       setBusy(false);
     }
@@ -153,9 +76,9 @@ export const AccountPage: React.FC = () => {
     setBusy(true);
     try {
       await updateUserProfile(profileName, profileBio);
-      setNotice('Your reader profile has been updated.');
+      setNotice('Your profile has been updated.');
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Unable to save profile.');
+      setErrorMsg(formatAuthError(err));
     } finally {
       setBusy(false);
     }
@@ -193,7 +116,7 @@ export const AccountPage: React.FC = () => {
           {user ? 'Your Literary Profile' : 'Join SHAHNOOR Writes'}
         </h1>
         <p className="font-editorial text-base text-[#493528]/80 leading-relaxed">
-          Create an account with your email ID—or register separate accounts whenever you wish—to share your own thoughts in the reader circle and leave reflections beneath essays.
+          Join or sign in directly with your email and password to share your thoughts, express your feelings, and leave reflections beneath writings.
         </p>
       </header>
 
@@ -223,7 +146,7 @@ export const AccountPage: React.FC = () => {
                 authMode === 'signup' ? 'bg-[#493528] text-[#F2EBDD]' : 'text-[#493528]'
               }`}
             >
-              Create Account
+              Join
             </button>
             <button
               type="button"
@@ -246,7 +169,7 @@ export const AccountPage: React.FC = () => {
                   htmlFor="acc-name"
                   className="block text-xs uppercase tracking-[0.12em] text-[#493528]/75 mb-1.5"
                 >
-                  Display Name
+                  Name
                 </label>
                 <input
                   id="acc-name"
@@ -255,7 +178,7 @@ export const AccountPage: React.FC = () => {
                   maxLength={80}
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="How your name appears beside your thoughts"
+                  placeholder="Your name"
                   className="w-full px-4 py-3 text-sm bg-[#F2EBDD] border border-[#493528]/22 text-[#25231F] focus:outline-none focus:border-[#9C443B]"
                 />
               </div>
@@ -266,7 +189,7 @@ export const AccountPage: React.FC = () => {
                 htmlFor="acc-email"
                 className="block text-xs uppercase tracking-[0.12em] text-[#493528]/75 mb-1.5"
               >
-                Email ID
+                Email
               </label>
               <input
                 id="acc-email"
@@ -326,25 +249,19 @@ export const AccountPage: React.FC = () => {
               {busy
                 ? 'Please wait...'
                 : authMode === 'signup'
-                  ? 'Create Account with Email'
-                  : 'Sign In with Email'}
+                  ? 'Create Account'
+                  : 'Sign In'}
             </button>
           </form>
 
-          <div className="my-6 flex items-center gap-4 text-xs text-[#493528]/60">
-            <span className="flex-1 h-px bg-[#493528]/15" />
-            <span>or</span>
-            <span className="flex-1 h-px bg-[#493528]/15" />
+          <div className="mt-6 pt-5 border-t border-[#493528]/14 text-center">
+            <p className="text-xs text-[#493528]/75">
+              Are you the publication author?{' '}
+              <Link to="/admin" className="text-[#9C443B] font-medium hover:underline">
+                Open Author Studio
+              </Link>
+            </p>
           </div>
-
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void handleGoogleSignIn()}
-            className="w-full py-3 text-xs font-medium uppercase tracking-[0.1em] border border-[#493528]/30 text-[#25231F] hover:border-[#9C443B] hover:text-[#9C443B] transition-colors cursor-pointer"
-          >
-            Continue with Google
-          </button>
         </section>
       ) : (
         <div className="space-y-8">
@@ -352,17 +269,10 @@ export const AccountPage: React.FC = () => {
           <section className="ivory-surface border border-[#493528]/18 p-6 sm:p-8 flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div>
               <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] mb-1.5">
-                {user.emailVerified ? (
-                  <span className="inline-flex items-center gap-1.5 text-[#485B47]">
-                    <CheckCircle2 className="w-4 h-4" />
-                    Verified Reader Account
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 text-[#9C443B]">
-                    <MailCheck className="w-4 h-4" />
-                    Email Verification Pending
-                  </span>
-                )}
+                <span className="inline-flex items-center gap-1.5 text-[#485B47]">
+                  <CheckCircle2 className="w-4 h-4" />
+                  {isAdmin ? 'Author Account Active' : 'Reader Account Active'}
+                </span>
               </div>
               <h2 className="font-display text-2xl sm:text-3xl font-medium text-[#25231F]">
                 {userProfile?.displayName || user.displayName || 'Reader'}
@@ -392,7 +302,7 @@ export const AccountPage: React.FC = () => {
                 className="inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border border-[#493528]/25 text-[#493528] hover:border-[#9C443B] cursor-pointer"
               >
                 <UserPlus className="w-3.5 h-3.5" />
-                Switch / New Account
+                Switch / Join New Account
               </button>
               <button
                 type="button"
@@ -404,36 +314,6 @@ export const AccountPage: React.FC = () => {
               </button>
             </div>
           </section>
-
-          {!user.emailVerified && (
-            <section className="p-6 bg-[#9C443B]/8 border border-[#9C443B]/25 space-y-4">
-              <h3 className="font-display text-xl font-medium text-[#25231F]">
-                Verify your email ID to begin sharing
-              </h3>
-              <p className="font-editorial text-sm text-[#493528]/85 leading-relaxed">
-                We sent a confirmation link to <span className="font-medium text-[#25231F]">{user.email}</span>. Once you click that link, return here and refresh your session to post thoughts and article reflections.
-              </p>
-              <div className="flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void handleRefreshVerification()}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium uppercase tracking-wider bg-[#493528] text-[#F2EBDD] hover:bg-[#9C443B] cursor-pointer"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  I&apos;ve Verified — Refresh
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void handleResend()}
-                  className="px-4 py-2 text-xs font-medium border border-[#493528]/30 text-[#493528] hover:border-[#9C443B] cursor-pointer"
-                >
-                  Resend Verification Email
-                </button>
-              </div>
-            </section>
-          )}
 
           {/* Profile Editor */}
           <section className="ivory-surface border border-[#493528]/18 p-6 sm:p-8">

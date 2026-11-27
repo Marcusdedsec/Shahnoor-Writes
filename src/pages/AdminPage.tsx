@@ -13,8 +13,8 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useEditorial } from '../context/EditorialContext';
-import { PRIMARY_ADMIN_EMAIL } from '../firebase';
 import { Article } from '../types/editorial';
+import { formatAuthError } from '../utils/authError';
 import { formatEditorialDate } from '../utils/editorialUtils';
 import { ArticleEditor } from '../components/ArticleEditor';
 import { ChinarLeafMark, ManuscriptDivider } from '../components/KashmiriOrnaments';
@@ -25,12 +25,15 @@ export const AdminPage: React.FC = () => {
   const {
     user,
     authReady,
+    authorConfig,
+    authorConfigLoaded,
     isAdmin,
     allArticles,
     categories,
     subscribers,
     messages,
-    signInWithGoogle,
+    createAuthorProfile,
+    signInWithEmail,
     signOutUser,
     deleteArticle,
     addCategory,
@@ -46,6 +49,14 @@ export const AdminPage: React.FC = () => {
   const [busyAction, setBusyAction] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // Author authentication form state
+  const [authMode, setAuthMode] = useState<'create' | 'signin'>('create');
+  const [authorName, setAuthorName] = useState('');
+  const [authorEmail, setAuthorEmail] = useState('');
+  const [authorPassword, setAuthorPassword] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
   const [newCatName, setNewCatName] = useState('');
   const [newCatDesc, setNewCatDesc] = useState('');
   const [newCatAccent, setNewCatAccent] = useState('#9C443B');
@@ -54,7 +65,35 @@ export const AdminPage: React.FC = () => {
     document.title = 'Author Studio — SHAHNOOR Writes';
   }, []);
 
-  if (!authReady) {
+  useEffect(() => {
+    if (authorConfigLoaded) {
+      setAuthMode(authorConfig ? 'signin' : 'create');
+    }
+  }, [authorConfigLoaded, authorConfig]);
+
+  const handleAuthorAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthBusy(true);
+    try {
+      if (!authorConfig && authMode === 'create') {
+        await createAuthorProfile({
+          displayName: authorName,
+          email: authorEmail,
+          password: authorPassword,
+        });
+      } else {
+        await signInWithEmail(authorEmail, authorPassword);
+      }
+      setAuthorPassword('');
+    } catch (err) {
+      setAuthError(formatAuthError(err));
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  if (!authReady || !authorConfigLoaded) {
     return (
       <main className="max-w-3xl mx-auto px-5 py-24 text-center">
         <p className="font-display italic text-2xl text-[#493528]">
@@ -65,34 +104,137 @@ export const AdminPage: React.FC = () => {
   }
 
   if (!user) {
+    const canCreateProfile = !authorConfig;
+
     return (
-      <main className="max-w-xl mx-auto px-5 sm:px-8 py-20">
-        <div className="ivory-surface border border-[#493528]/20 p-8 sm:p-12 text-center">
-          <ChinarLeafMark className="w-8 h-8 text-[#9C443B] mx-auto mb-4" />
-          <p className="text-xs tracking-[0.2em] uppercase text-[#9C443B] font-medium mb-2">
-            Author Studio
-          </p>
-          <h1 className="font-display text-3xl sm:text-4xl font-medium text-[#25231F] mb-4">
-            Sign in to Publish
-          </h1>
-          <p className="font-editorial text-sm leading-relaxed text-[#493528]/85 mb-8">
-            Access to the SHAHNOOR Writes publishing studio, drafts, reader letters, and subscriber ledger is restricted to the publication owner.
-          </p>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-            <button
-              type="button"
-              onClick={() => void signInWithGoogle()}
-              className="inline-flex items-center justify-center gap-2.5 px-7 py-3 text-xs font-medium tracking-[0.08em] uppercase bg-[#493528] text-[#F2EBDD] hover:bg-[#9C443B] transition-colors cursor-pointer"
-            >
-              Sign in with Google
-            </button>
-            <Link
-              to="/account"
-              className="inline-flex items-center justify-center px-6 py-3 text-xs font-medium tracking-[0.08em] uppercase border border-[#493528]/30 text-[#493528] hover:border-[#9C443B] hover:text-[#9C443B] transition-colors"
-            >
-              Sign in with Email
-            </Link>
+      <main className="max-w-xl mx-auto px-5 sm:px-8 py-14 sm:py-20">
+        <div className="ivory-surface border border-[#493528]/20 p-8 sm:p-11">
+          <div className="text-center mb-7">
+            <ChinarLeafMark className="w-8 h-8 text-[#9C443B] mx-auto mb-4" />
+            <p className="text-xs tracking-[0.2em] uppercase text-[#9C443B] font-medium mb-2">
+              Author Studio
+            </p>
+            <h1 className="font-display text-3xl sm:text-4xl font-medium text-[#25231F] mb-3">
+              {canCreateProfile && authMode === 'create'
+                ? 'Create Author Profile'
+                : 'Author Sign In'}
+            </h1>
+            <p className="font-editorial text-sm leading-relaxed text-[#493528]/80">
+              {canCreateProfile
+                ? 'Set up your personal author profile with your name, email, and password to publish stories and use the Writing Assistant.'
+                : `Sign in with your author email and password to access ${authorConfig.displayName}’s publishing desk.`}
+            </p>
           </div>
+
+          {canCreateProfile && (
+            <div className="grid grid-cols-2 border border-[#493528]/20 bg-[#F2EBDD] p-1 mb-6">
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode('create');
+                  setAuthError(null);
+                }}
+                className={`py-2 text-xs font-medium uppercase tracking-wider cursor-pointer transition-colors ${
+                  authMode === 'create' ? 'bg-[#493528] text-[#F2EBDD]' : 'text-[#493528]'
+                }`}
+              >
+                Create Profile
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode('signin');
+                  setAuthError(null);
+                }}
+                className={`py-2 text-xs font-medium uppercase tracking-wider cursor-pointer transition-colors ${
+                  authMode === 'signin' ? 'bg-[#493528] text-[#F2EBDD]' : 'text-[#493528]'
+                }`}
+              >
+                Sign In
+              </button>
+            </div>
+          )}
+
+          {authError && (
+            <div
+              role="alert"
+              className="mb-5 p-3.5 bg-[#9C443B]/10 border border-[#9C443B]/30 text-xs text-[#9C443B]"
+            >
+              {authError}
+            </div>
+          )}
+
+          <form onSubmit={handleAuthorAuthSubmit} className="space-y-4">
+            {canCreateProfile && authMode === 'create' && (
+              <div>
+                <label
+                  htmlFor="author-name"
+                  className="block text-xs uppercase tracking-[0.12em] text-[#493528]/75 mb-1.5"
+                >
+                  Author Name
+                </label>
+                <input
+                  id="author-name"
+                  type="text"
+                  required
+                  maxLength={80}
+                  value={authorName}
+                  onChange={(e) => setAuthorName(e.target.value)}
+                  placeholder="Shahnoor"
+                  className="w-full px-4 py-3 text-sm bg-[#F2EBDD] border border-[#493528]/22 text-[#25231F] focus:outline-none focus:border-[#9C443B]"
+                />
+              </div>
+            )}
+
+            <div>
+              <label
+                htmlFor="author-email"
+                className="block text-xs uppercase tracking-[0.12em] text-[#493528]/75 mb-1.5"
+              >
+                Email
+              </label>
+              <input
+                id="author-email"
+                type="email"
+                required
+                value={authorEmail}
+                onChange={(e) => setAuthorEmail(e.target.value)}
+                placeholder="author@example.com"
+                className="w-full px-4 py-3 text-sm bg-[#F2EBDD] border border-[#493528]/22 text-[#25231F] focus:outline-none focus:border-[#9C443B]"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="author-password"
+                className="block text-xs uppercase tracking-[0.12em] text-[#493528]/75 mb-1.5"
+              >
+                Password
+              </label>
+              <input
+                id="author-password"
+                type="password"
+                required
+                minLength={6}
+                value={authorPassword}
+                onChange={(e) => setAuthorPassword(e.target.value)}
+                placeholder="At least 6 characters"
+                className="w-full px-4 py-3 text-sm bg-[#F2EBDD] border border-[#493528]/22 text-[#25231F] focus:outline-none focus:border-[#9C443B]"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={authBusy}
+              className="w-full py-3.5 text-xs font-medium uppercase tracking-[0.12em] bg-[#9C443B] text-[#F2EBDD] hover:bg-[#493528] transition-colors cursor-pointer disabled:opacity-60"
+            >
+              {authBusy
+                ? 'Please wait...'
+                : canCreateProfile && authMode === 'create'
+                  ? 'Create Author Profile & Enter Studio'
+                  : 'Sign In to Author Studio'}
+            </button>
+          </form>
         </div>
       </main>
     );
@@ -103,21 +245,33 @@ export const AdminPage: React.FC = () => {
       <main className="max-w-xl mx-auto px-5 sm:px-8 py-20">
         <div className="ivory-surface border border-[#493528]/20 p-8 sm:p-12 text-center">
           <p className="text-xs tracking-[0.2em] uppercase text-[#9C443B] font-medium mb-2">
-            Access Restricted
+            Author Access Required
           </p>
           <h1 className="font-display text-3xl font-medium text-[#25231F] mb-4">
-            Owner Credentials Required
+            {!authorConfig ? 'Set Up the Author Profile' : 'Author Sign-In Required'}
           </h1>
           <p className="font-editorial text-sm leading-relaxed text-[#493528]/85 mb-6">
-            You are signed in as <span className="font-medium text-[#25231F]">{user.email}</span>, which is not authorized to publish on SHAHNOOR Writes. Please sign in with the verified owner account ({PRIMARY_ADMIN_EMAIL}).
+            You are currently signed in as{' '}
+            <span className="font-medium text-[#25231F]">{user.email}</span>.{' '}
+            {!authorConfig
+              ? 'Sign out to create the Author Profile with your name, email, and password.'
+              : `Author Studio is managed by ${authorConfig.displayName}. Please sign out and sign in with the author email and password.`}
           </p>
-          <button
-            type="button"
-            onClick={() => void signOutUser()}
-            className="px-6 py-2.5 text-xs font-medium uppercase tracking-wider border border-[#493528]/30 text-[#493528] hover:border-[#9C443B] cursor-pointer"
-          >
-            Sign Out
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => void signOutUser()}
+              className="px-6 py-2.5 text-xs font-medium uppercase tracking-wider bg-[#493528] text-[#F2EBDD] hover:bg-[#9C443B] transition-colors cursor-pointer"
+            >
+              {!authorConfig ? 'Sign Out & Create Author Profile' : 'Sign Out'}
+            </button>
+            <Link
+              to="/account"
+              className="px-5 py-2.5 text-xs font-medium uppercase tracking-wider border border-[#493528]/30 text-[#493528] hover:border-[#9C443B]"
+            >
+              Back to Account
+            </Link>
+          </div>
         </div>
       </main>
     );
@@ -181,7 +335,7 @@ export const AdminPage: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'shah-noor-writes-subscribers.csv';
+    a.download = 'shahnoor-writes-subscribers.csv';
     a.click();
     URL.revokeObjectURL(url);
   };

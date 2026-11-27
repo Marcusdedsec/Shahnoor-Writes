@@ -406,25 +406,13 @@ export const ArticlePage: React.FC = () => {
             {!user ? (
               <div className="p-5 bg-[#E9DFC9]/45 border border-[#493528]/16 flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
                 <p className="font-editorial text-sm text-[#493528]/85">
-                  Sign in or create an account with your email ID to leave a reflection on this essay.
+                  Join or sign in with your email and password to leave a reflection on this essay.
                 </p>
                 <Link
                   to="/account"
                   className="px-4 py-2 text-xs font-medium uppercase tracking-wider bg-[#493528] text-[#F2EBDD] hover:bg-[#9C443B] transition-colors shrink-0 text-center"
                 >
-                  Account / Sign In
-                </Link>
-              </div>
-            ) : !user.emailVerified ? (
-              <div className="p-5 bg-[#9C443B]/8 border border-[#9C443B]/25 flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-                <p className="font-editorial text-sm text-[#493528]/85">
-                  Verify your email address on your account page to post a reflection.
-                </p>
-                <Link
-                  to="/account"
-                  className="px-4 py-2 text-xs font-medium uppercase tracking-wider bg-[#9C443B] text-[#F2EBDD] shrink-0 text-center"
-                >
-                  Verify Email
+                  Join / Sign In
                 </Link>
               </div>
             ) : (
@@ -467,8 +455,7 @@ export const ArticlePage: React.FC = () => {
               <div className="space-y-4">
                 {reflections.map((refItem) => {
                   const canRemove =
-                    Boolean(user?.emailVerified) &&
-                    (refItem.authorId === user?.uid || isAdmin);
+                    Boolean(user) && (refItem.authorId === user?.uid || isAdmin);
                   const dateLabel = refItem.createdAtMillis
                     ? new Date(refItem.createdAtMillis).toLocaleDateString('en-US', {
                         year: 'numeric',

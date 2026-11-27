@@ -70,23 +70,45 @@ async function verifyFirebaseAdminToken(idToken: string): Promise<void> {
   if (!user || !user.localId || !user.email) {
     throw new Error('Unable to verify account identity.');
   }
-  if (!user.emailVerified) {
-    throw new Error('Please verify your email address before using the Writing Assistant.');
-  }
 
   const normalizedEmail = user.email.toLowerCase();
-  if (normalizedEmail !== PRIMARY_ADMIN_EMAIL) {
-    const adminDocUrl = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
+  const isVerifiedPrimary =
+    Boolean(user.emailVerified) && normalizedEmail === PRIMARY_ADMIN_EMAIL;
+
+  let isAuthorized = isVerifiedPrimary;
+
+  if (!isAuthorized) {
+    const baseFirestoreUrl = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
       firebaseConfig.projectId,
-    )}/databases/${encodeURIComponent(
-      firebaseConfig.firestoreDatabaseId,
-    )}/documents/admins/${encodeURIComponent(user.localId)}`;
-    const adminRes = await fetch(adminDocUrl, {
+    )}/databases/${encodeURIComponent(firebaseConfig.firestoreDatabaseId)}/documents`;
+
+    const authorDocRes = await fetch(`${baseFirestoreUrl}/appConfig/author`, {
       headers: { Authorization: `Bearer ${idToken}` },
     });
-    if (!adminRes.ok) {
-      throw new Error('Only authorized authors may access the Writing Assistant.');
+    if (authorDocRes.ok) {
+      const authorDoc = (await authorDocRes.json()) as {
+        fields?: { ownerUid?: { stringValue?: string } };
+      };
+      if (authorDoc.fields?.ownerUid?.stringValue === user.localId) {
+        isAuthorized = true;
+      }
     }
+
+    if (!isAuthorized) {
+      const adminRes = await fetch(
+        `${baseFirestoreUrl}/admins/${encodeURIComponent(user.localId)}`,
+        {
+          headers: { Authorization: `Bearer ${idToken}` },
+        },
+      );
+      if (adminRes.ok) {
+        isAuthorized = true;
+      }
+    }
+  }
+
+  if (!isAuthorized) {
+    throw new Error('Only authorized authors may access the Writing Assistant.');
   }
 }
 
